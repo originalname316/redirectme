@@ -1,0 +1,175 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Redirect</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:2rem;background:#f7f7f8}
+  .card{max-width:760px;margin:auto;background:#fff;border:1px solid #eee;padding:1rem 1.25rem;border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  label{display:block;margin-top:.75rem;font-weight:600}
+  input,textarea{width:100%;padding:.5rem;margin-top:.4rem;border:1px solid #ddd;border-radius:6px;font:inherit}
+  .row{display:flex;gap:.5rem;margin-top:.5rem}
+  button{padding:.5rem .75rem;border-radius:6px;border:1px solid #ccc;background:#fafafa;cursor:pointer}
+  button.primary{background:#111;color:#fff;border-color:transparent}
+  .hint{color:#666;font-size:.9rem;margin-top:.5rem}
+  .example{font-family:monospace;background:#f1f3f5;padding:.5rem;border-radius:6px;margin-top:.5rem;overflow:auto}
+</style>
+
+</head><body><div class="card">
+  <h1>Redirect</h1>
+  <p id="msg">No ?url= parameter provided.</p>
+
+  <div id="manual" style="display: block;">
+    <label>Target URL or scheme</label>
+    <input id="target" placeholder="https://example.com/path?foo=bar or custom-scheme://action?x=1">
+
+    <label>Optional description</label>
+    <input id="label" placeholder="Short note about the link (optional)">
+
+    <div class="row">
+      <button id="build" class="primary">Build redirect link</button>
+      <button id="open">Open now</button>
+      <button id="copy">Copy link</button>
+    </div>
+
+    <div class="hint">Resulting redirect URL (use this as the public link):</div>
+    <div id="out" class="example"></div>
+
+    <div class="hint">Tip: The generator encodes spaces and special characters automatically.</div>
+  </div>
+
+  <p class="hint">Usage: append ?url=&lt;URL-ENCODED-TARGET&gt; to this page, or use the generator below.</p>
+</div>
+
+<script>
+/* Helpers */
+function isHttpOrHttps(candidate){
+  try{
+    const u = new URL(candidate);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  }catch(e){
+    return false;
+  }
+}
+
+/* Attempt to trigger custom scheme then leave page (about:blank / close) */
+function triggerThenBlank(target){
+  // Try iframe approach to trigger handler without navigating away
+  try {
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = target;
+    document.body.appendChild(iframe);
+    setTimeout(()=>{ try{ document.body.removeChild(iframe); }catch(e){} }, 1200);
+  } catch (e) {}
+
+  // Give OS/app some time to handle the scheme, then attempt to leave page
+  setTimeout(()=>{
+    try { window.close(); return; } catch(e){}
+    try { top.location.replace('about:blank'); return; } catch(e){}
+    try { top.location.href = 'data:text/html,<meta http-equiv="refresh" content="0;url=about:blank">'; return; } catch(e){}
+    try { top.location.href = 'about:blank'; } catch(e){}
+  }, 800);
+}
+
+/* Open target: http(s) -> normal navigation; custom -> triggerThenBlank */
+function openTarget(target){
+  if(!target) return;
+  if(isHttpOrHttps(target)){
+    location.href = target;
+    return;
+  }
+  // For non-http(s) try to trigger handler then blank/close
+  // Also try direct navigation as a best-effort
+  try { location.href = target; } catch(e){}
+  triggerThenBlank(target);
+}
+
+/* Build redirect link to this page */
+function makeRedirectLink(target){
+  if(!target) return '';
+  try{
+    const encoded = encodeURIComponent(target);
+    const base = location.origin + location.pathname;
+    return base + '?url=' + encoded;
+  }catch(e){
+    return '';
+  }
+}
+
+/* DOM wiring */
+const params = new URLSearchParams(location.search);
+const p = params.get('url');
+const msg = document.getElementById('msg');
+const manual = document.getElementById('manual');
+const targetInput = document.getElementById('target');
+const labelInput = document.getElementById('label');
+const buildBtn = document.getElementById('build');
+const openBtn = document.getElementById('open');
+const copyBtn = document.getElementById('copy');
+const out = document.getElementById('out');
+
+function setOut(s){ out.textContent = s || ''; }
+
+if(p){
+  msg.textContent = 'Redirecting…';
+  try{
+    const decoded = decodeURIComponent(p).trim();
+    if(!decoded){
+      msg.textContent = 'Empty target after decoding.';
+      manual.style.display = 'block';
+    } else {
+      openTarget(decoded);
+    }
+  }catch(e){
+    msg.textContent = 'Invalid url parameter.';
+    manual.style.display = 'block';
+  }
+} else {
+  msg.textContent = 'No ?url= parameter provided.';
+  manual.style.display = 'block';
+
+  // Try to prefill from clipboard
+  if(navigator.clipboard && navigator.permissions){
+    navigator.permissions.query({name:'clipboard-read'}).then(res=>{
+      if(res.state === 'granted' || res.state === 'prompt'){
+        navigator.clipboard.readText().then(t=>{
+          if(t && t.length < 2000 && (t.startsWith('http') || t.includes('://'))) targetInput.value = t;
+        }).catch(()=>{});
+      }
+    }).catch(()=>{});
+  }
+}
+
+/* Buttons */
+buildBtn.addEventListener('click', ()=>{
+  const val = targetInput.value.trim();
+  if(!val) return setOut('Please enter a target URL.');
+  setOut(makeRedirectLink(val));
+});
+
+openBtn.addEventListener('click', ()=>{
+  const val = targetInput.value.trim();
+  if(!val) return setOut('Please enter a target URL to open.');
+  openTarget(val);
+});
+
+copyBtn.addEventListener('click', async ()=>{
+  const existing = out.textContent || makeRedirectLink(targetInput.value.trim());
+  if(!existing) return setOut('Nothing to copy.');
+  try{
+    await navigator.clipboard.writeText(existing);
+    setOut('Copied to clipboard: ' + existing);
+  }catch(e){
+    const ta = document.createElement('textarea');
+    ta.value = existing;
+    document.body.appendChild(ta);
+    ta.select();
+    try{ document.execCommand('copy'); setOut('Copied to clipboard: ' + existing); }catch(e2){ setOut(existing + ' (copy manually)'); }
+    document.body.removeChild(ta);
+  }
+});
+</script>
+
+<noscript>
+  JavaScript is required — open this link manually: <span id="u"></span>
+  <script>document.getElementById('u').textContent = new URLSearchParams(location.search).get('url') || 'No url provided.'</script>
+</noscript>
+</body></html>
